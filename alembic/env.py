@@ -1,0 +1,88 @@
+# alembic/env.py
+
+from __future__ import annotations
+
+from logging.config import fileConfig
+from typing import Iterable
+
+from sqlalchemy import engine_from_config, pool
+from alembic import context
+
+# --- IMPORTS PROJET ---
+from app.core.config import settings
+from app.db.base import Base
+
+# Import explicite des modèles pour qu'Alembic les détecte
+# (évite les import circulaires avec Base)
+from app.db.models import vehicle  # noqa: F401
+from app.db.models import vehicle_status  # noqa: F401
+
+# ---------------------------------------------------------
+# Configuration Alembic
+# ---------------------------------------------------------
+
+# Alembic lit d'abord le fichier alembic.ini
+config = context.config
+
+# On injecte dynamiquement l'URL provenant du fichier .env
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+
+# Configuration du logging d'Alembic
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# Toutes les métadonnées SQLAlchemy (tables)
+target_metadata = Base.metadata
+
+
+# ---------------------------------------------------------
+# Modes offline / online
+# ---------------------------------------------------------
+
+def run_migrations_offline() -> None:
+    """Exécute les migrations en mode 'offline'.
+
+    Alembic génère simplement les SQL sans avoir besoin d’une connexion active.
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        compare_type=True,  # Compare aussi les types SQL
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Exécute les migrations en mode 'online'.
+
+    Dans ce mode, Alembic ouvre une vraie connexion DB.
+    """
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,  # adapté SQLite & Postgres
+    )
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+# ---------------------------------------------------------
+# Sélection du mode actif
+# ---------------------------------------------------------
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
