@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models.vehicle import Vehicle
 from app.db.models.vehicle_status import VehicleStatus
-from app.schemas.vehicle import VehicleCreate
+from app.schemas.vehicle import VehicleCreate, VehicleStatusCreate
 
 
 def create_vehicle(db: Session, data: VehicleCreate) -> Vehicle:
@@ -47,4 +47,38 @@ def get_latest_status(db: Session, vehicle_id: int) -> Optional[VehicleStatus]:
         .filter(VehicleStatus.vehicle_id == vehicle_id)
         .order_by(VehicleStatus.timestamp.desc())
         .first()
+    )
+
+def create_status(
+    db: Session,
+    vehicle_id: int,
+    data: VehicleStatusCreate,
+) -> VehicleStatus:
+    """
+    Crée un nouveau statut pour un véhicule donné.
+    """
+    status_obj = VehicleStatus(
+        vehicle_id=vehicle_id,
+        battery_level=data.battery_level,
+        doors_locked=data.doors_locked,
+        odometer_km=data.odometer_km,
+    )
+    db.add(status_obj)
+    db.commit()
+    db.refresh(status_obj)
+    return status_obj
+
+def list_statuses(
+    db: Session,
+    vehicle_id: int,
+) -> List[VehicleStatus]:
+    """
+    Retourne l'historique des statuts pour un véhicule donné,
+    du plus récent au plus ancien.
+    """
+    return (
+        db.query(VehicleStatus)
+        .filter(VehicleStatus.vehicle_id == vehicle_id)
+        .order_by(VehicleStatus.timestamp.desc())
+        .all()
     )

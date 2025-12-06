@@ -57,3 +57,17 @@ class VehicleStatusRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+class VehicleStatusCreate(BaseModel):
+    battery_level: Optional[float] = Field(
+        None,
+        description="Niveau de batterie en pourcentage.",
+    )
+    doors_locked: bool = Field(
+        True,
+        description="True si les portes sont verrouillées.",
+    )
+    odometer_km: Optional[float] = Field(
+        None,
+        description="Odomètre en kilomètres.",
+    )

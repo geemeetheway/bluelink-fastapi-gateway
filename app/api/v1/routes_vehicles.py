@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.vehicle import VehicleCreate, VehicleRead, VehicleStatusRead
+from app.schemas.vehicle import VehicleCreate, VehicleRead, VehicleStatusRead, VehicleStatusCreate
 from app.services import vehicles as vehicle_service
 
 router = APIRouter()
@@ -63,6 +63,55 @@ def get_vehicle_endpoint(
         )
     return v
 
+@router.post(
+    "/vehicles/{vehicle_id}/status",
+    response_model=VehicleStatusRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Créer un statut pour un véhicule",
+)
+def create_status_endpoint(
+    vehicle_id: int,
+    payload: VehicleStatusCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Crée un nouveau statut (télémétrie) pour un véhicule donné.
+    """
+    v = vehicle_service.get_vehicle(db, vehicle_id=vehicle_id)
+    if not v:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vehicle not found",
+        )
+
+    status_obj = vehicle_service.create_status(
+        db=db,
+        vehicle_id=vehicle_id,
+        data=payload,
+    )
+    return status_obj
+
+@router.get(
+    "/vehicles/{vehicle_id}/statuses",
+    response_model=List[VehicleStatusRead],
+    summary="Lister les statuts d'un véhicule",
+)
+def list_statuses_endpoint(
+    vehicle_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Retourne l'historique des statuts pour un véhicule donné,
+    du plus récent au plus ancien.
+    """
+    v = vehicle_service.get_vehicle(db, vehicle_id=vehicle_id)
+    if not v:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vehicle not found",
+        )
+
+    return vehicle_service.list_statuses(db, vehicle_id=vehicle_id)
 
 @router.get(
     "/vehicles/{vehicle_id}/status/latest",
