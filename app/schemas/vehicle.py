@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # -----------------
@@ -39,8 +39,8 @@ class VehicleRead(VehicleBase):
     id: int
     is_active: bool
 
-    class Config:
-        orm_mode = True
+    # Pydantic v2 : remplace l'ancien `class Config: orm_mode = True`
+    model_config = ConfigDict(from_attributes=True)
 
 
 # -------------------------
@@ -55,8 +55,9 @@ class VehicleStatusRead(BaseModel):
     doors_locked: bool
     odometer_km: Optional[float] = None
 
-    class Config:
-        orm_mode = True
+    # Pydantic v2 : idem, permet la conversion depuis un objet SQLAlchemy
+    model_config = ConfigDict(from_attributes=True)
+
 
 class VehicleStatusCreate(BaseModel):
     battery_level: Optional[float] = Field(
