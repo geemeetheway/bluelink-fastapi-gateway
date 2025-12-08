@@ -16,7 +16,7 @@ class Vehicle(Base):
     external_id = Column(String, index=True, nullable=True, unique=True)
 
     # VIN du véhicule (facultatif, mais généralement unique)
-    vin = Column(String, index=True, nullable=True, unique=True)
+    vin = Column(String(32), nullable=True, unique=True, index=True)
 
     # Nom ou surnom donné au véhicule (ex.: "Ioniq 5 familiale")
     nickname = Column(String, nullable=True)
