@@ -4,7 +4,7 @@ from fastapi import APIRouter
 router = APIRouter()
 
 
-@router.get("/health", tags=["health"])
+@router.get("/", tags=["health"])
 def health_check():
     """
     Endpoint de vérification de l'état de l'API.
