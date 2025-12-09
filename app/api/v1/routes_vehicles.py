@@ -20,11 +20,11 @@ router = APIRouter()
 
 # Client MyBlueLink "global" très simple.
 # Tu peux remplacer par une dépendance FastAPI si tu préfères.
-mybluelink_client = MyBlueLinkClient(
-    base_url=os.getenv("MYBLUELINK_BASE_URL", "https://mybluelink.ca"),
-    username=os.getenv("MYBLUELINK_USERNAME", ""),
-    password=os.getenv("MYBLUELINK_PASSWORD", ""),
-    pin=os.getenv("MYBLUELINK_PIN", ""),
+BLUELINK_client = MyBlueLinkClient(
+    base_url=os.getenv("BLUELINK_BASE_URL", "https://mybluelink.ca"),
+    username=os.getenv("BLUELINK_USERNAME", ""),
+    password=os.getenv("BLUELINK_PASSWORD", ""),
+    pin=os.getenv("BLUELINK_PIN", ""),
 )
 
 
@@ -191,7 +191,7 @@ def get_latest_status_endpoint(
     response_model=VehicleStatusRead,
     summary="Rafraîchir le statut d'un véhicule via MyBlueLink",
 )
-def refresh_status_from_mybluelink_endpoint(
+def refresh_status_from_BLUELINK_endpoint(
     vehicle_id: int,
     db: Session = Depends(get_db),
 ):
@@ -217,7 +217,7 @@ def refresh_status_from_mybluelink_endpoint(
         )
 
     try:
-        bluelink_json = mybluelink_client.get_realtime_status(vin=vin)
+        bluelink_json = BLUELINK_client.get_realtime_status(vin=vin)
     except MyBlueLinkError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

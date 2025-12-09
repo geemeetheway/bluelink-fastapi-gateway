@@ -24,9 +24,9 @@ class MyBlueLinkProvider(TelematicsProvider):
     BASE_URL = "https://mybluelink.ca/tods/api"
 
     def __init__(self, settings=settings) -> None:
-        self.username = settings.MYBLUELINK_USERNAME
-        self.password = settings.MYBLUELINK_PASSWORD
-        self.pin = settings.MYBLUELINK_PIN
+        self.username = settings.BLUELINK_USERNAME
+        self.password = settings.BLUELINK_PASSWORD
+        self.pin = settings.BLUELINK_PIN
         self.session_token: Optional[str] = None
         self.client = httpx.Client(timeout=20.0)
 

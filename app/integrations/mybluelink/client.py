@@ -48,17 +48,17 @@ class MyBlueLinkConfig:
         Construit la configuration à partir des variables d'environnement.
 
         Variables possibles :
-        - MYBLUELINK_USERNAME
-        - MYBLUELINK_PASSWORD
-        - MYBLUELINK_PIN
-        - MYBLUELINK_BASE_URL
-        - MYBLUELINK_DEMO_MODE (true/false)
+        - BLUELINK_USERNAME
+        - BLUELINK_PASSWORD
+        - BLUELINK_PIN
+        - BLUELINK_BASE_URL
+        - BLUELINK_DEMO_MODE (true/false)
         """
-        username = os.getenv("MYBLUELINK_USERNAME", "").strip()
-        password = os.getenv("MYBLUELINK_PASSWORD", "").strip()
-        pin = os.getenv("MYBLUELINK_PIN", "").strip() or None
-        base_url = os.getenv("MYBLUELINK_BASE_URL", "").strip() or None
-        demo_raw = os.getenv("MYBLUELINK_DEMO_MODE", "true").strip().lower()
+        username = os.getenv("BLUELINK_USERNAME", "").strip()
+        password = os.getenv("BLUELINK_PASSWORD", "").strip()
+        pin = os.getenv("BLUELINK_PIN", "").strip() or None
+        base_url = os.getenv("BLUELINK_BASE_URL", "").strip() or None
+        demo_raw = os.getenv("BLUELINK_DEMO_MODE", "true").strip().lower()
 
         demo_mode = demo_raw in ("1", "true", "yes", "y", "on")
 
@@ -67,7 +67,7 @@ class MyBlueLinkConfig:
             # En mode réel, on lève une erreur explicite.
             if not demo_mode:
                 raise MyBlueLinkError(
-                    "MYBLUELINK_USERNAME et MYBLUELINK_PASSWORD doivent être "
+                    "BLUELINK_USERNAME et BLUELINK_PASSWORD doivent être "
                     "définis dans l'environnement pour utiliser MyBlueLink en mode réel."
                 )
 
@@ -212,7 +212,7 @@ class MyBlueLinkClient:
 
         if not self._config.base_url:
             raise MyBlueLinkError(
-                "MYBLUELINK_BASE_URL doit être défini pour le mode réel."
+                "BLUELINK_BASE_URL doit être défini pour le mode réel."
             )
 
         login_url = f"{self._config.base_url.rstrip('/')}/login"
@@ -276,7 +276,7 @@ class MyBlueLinkClient:
 
         if not self._config.base_url:
             raise MyBlueLinkError(
-                "MYBLUELINK_BASE_URL doit être défini pour récupérer le statut réel."
+                "BLUELINK_BASE_URL doit être défini pour récupérer le statut réel."
             )
 
         # Exemple d'URL, à remplacer par celle de l'API MyBlueLink réelle.
