@@ -28,6 +28,9 @@ mybluelink_client = MyBlueLinkClient(
 )
 
 
+#------------------ ENDPOINTS VEHICLES ET STATUSES ------------------
+#------------------------------------------------------------
+# /vehicles [post]
 @router.post(
     "/vehicles",
     response_model=VehicleRead,
@@ -44,7 +47,8 @@ def create_vehicle_endpoint(
     v = vehicle_service.create_vehicle(db, data=payload)
     return v
 
-
+#------------------------------------------------------------
+# /vehicles [get]
 @router.get(
     "/vehicles",
     response_model=List[VehicleRead],
@@ -58,7 +62,8 @@ def list_vehicles_endpoint(
     """
     return vehicle_service.list_vehicles(db)
 
-
+#------------------------------------------------------------
+# /vehicles/{vehicle_id} [get]
 @router.get(
     "/vehicles/{vehicle_id}",
     response_model=VehicleRead,
@@ -79,37 +84,62 @@ def get_vehicle_endpoint(
         )
     return v
 
-
-@router.post(
+#------------------------------------------------------------
+# /vehicles/{vehicle_id}/status [post]
+@router.get(
     "/vehicles/{vehicle_id}/status",
     response_model=VehicleStatusRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Créer un statut pour un véhicule (simulation locale)",
 )
-def create_status_endpoint(
+def get_vehicle_status(
     vehicle_id: int,
-    payload: VehicleStatusCreate,
     db: Session = Depends(get_db),
 ):
     """
-    Crée un nouveau statut (télémétrie) pour un véhicule donné.
-    **Ce endpoint correspond à ton simulateur local.**
+    Retourne le DERNIER état connu du véhicule depuis la BD.
+    Ne déclenche PAS de nouvel appel MyBlueLink.
     """
-    v = vehicle_service.get_vehicle(db, vehicle_id=vehicle_id)
-    if not v:
+    vs = vehicle_service.get_latest_status(db, vehicle_id)
+    if not vs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Vehicle not found",
+            detail="No status found for this vehicle",
         )
+    return vs
 
-    status_obj = vehicle_service.create_status(
-        db=db,
-        vehicle_id=vehicle_id,
-        data=payload,
-    )
-    return status_obj
+#------------------------------------------------------------
+# /vehicles/{vehicle_id}/status/sync [post]
+@router.post(
+    "/vehicles/{vehicle_id}/status/sync",
+    response_model=VehicleStatusRead,
+)
+async def sync_vehicle_status(
+    vehicle_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    1. Appelle MyBlueLink pour le VIN correspondant.
+    2. Enregistre un nouveau VehicleStatus dans la BD.
+    3. Retourne ce nouveau status.
+    """
+    try:
+        vs = await vehicle_service.sync_vehicle_status_from_bluelink(db, vehicle_id)
+    except ValueError as e:
+        # Vehicle not found ou VIN manquant
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        # Autres erreurs (réseau, parsing, etc.)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Error while fetching data from MyBlueLink: {e}",
+        ) from e
 
+    return vs
 
+#------------------------------------------------------------
+# /vehicles/{vehicle_id}/statuses [get]
 @router.get(
     "/vehicles/{vehicle_id}/statuses",
     response_model=List[VehicleStatusRead],
@@ -132,7 +162,8 @@ def list_statuses_endpoint(
 
     return vehicle_service.list_statuses(db, vehicle_id=vehicle_id)
 
-
+#------------------------------------------------------------
+# /vehicles/{vehicle_id}/status/latest [get]
 @router.get(
     "/vehicles/{vehicle_id}/status/latest",
     response_model=VehicleStatusRead,
@@ -153,10 +184,8 @@ def get_latest_status_endpoint(
         )
     return status_obj
 
-
-# ------------- NOUVEL ENDPOINT : REFRESH VIA MYBLUELINK -------------
-
-
+#------------------------------------------------------------
+# /vehicles/{vehicle_id}/status/refresh [post]
 @router.post(
     "/vehicles/{vehicle_id}/status/refresh",
     response_model=VehicleStatusRead,

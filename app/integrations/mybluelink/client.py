@@ -3,109 +3,320 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from json import JSONDecodeError
 from typing import Any, Dict, Optional
 
-import httpx
+import requests
+
+
+# ---------------------------------------------------------------------------
+# Exceptions spécifiques à l'intégration MyBlueLink
+# ---------------------------------------------------------------------------
 
 
 class MyBlueLinkError(Exception):
-    """Erreur générique pour le client MyBlueLink."""
+    """
+    Erreur fonctionnelle liée à MyBlueLink (auth, JSON invalide, etc.).
+    Cette exception peut être interceptée dans les routes pour retourner
+    une réponse HTTP 4xx / 5xx propre au frontend.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Configuration simplifiée du client
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MyBlueLinkConfig:
+    """
+    Configuration du client MyBlueLink.
+    Les valeurs réelles peuvent être injectées via les variables
+    d'environnement dans le docker-compose (.env).
+    """
+
+    username: str
+    password: str
+    pin: Optional[str] = None
+    base_url: Optional[str] = None
+    demo_mode: bool = True  # En mode DEMO, on ne fait pas d'appel HTTP réel.
+
+    @classmethod
+    def from_env(cls) -> "MyBlueLinkConfig":
+        """
+        Construit la configuration à partir des variables d'environnement.
+
+        Variables possibles :
+        - MYBLUELINK_USERNAME
+        - MYBLUELINK_PASSWORD
+        - MYBLUELINK_PIN
+        - MYBLUELINK_BASE_URL
+        - MYBLUELINK_DEMO_MODE (true/false)
+        """
+        username = os.getenv("MYBLUELINK_USERNAME", "").strip()
+        password = os.getenv("MYBLUELINK_PASSWORD", "").strip()
+        pin = os.getenv("MYBLUELINK_PIN", "").strip() or None
+        base_url = os.getenv("MYBLUELINK_BASE_URL", "").strip() or None
+        demo_raw = os.getenv("MYBLUELINK_DEMO_MODE", "true").strip().lower()
+
+        demo_mode = demo_raw in ("1", "true", "yes", "y", "on")
+
+        if not username or not password:
+            # En mode DEMO, on autorise l’absence de credentials.
+            # En mode réel, on lève une erreur explicite.
+            if not demo_mode:
+                raise MyBlueLinkError(
+                    "MYBLUELINK_USERNAME et MYBLUELINK_PASSWORD doivent être "
+                    "définis dans l'environnement pour utiliser MyBlueLink en mode réel."
+                )
+
+        return cls(
+            username=username,
+            password=password,
+            pin=pin,
+            base_url=base_url,
+            demo_mode=demo_mode,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Client MyBlueLink
+# ---------------------------------------------------------------------------
 
 
 class MyBlueLinkClient:
     """
-    Client très simplifié pour l’API MyBlueLink.
+    Client minimaliste pour l'API (officieuse) MyBlueLink.
 
-    Il illustre le flux suivant :
-    - login (POST /tods/api/lgn)
-    - appel d’un endpoint de statut en temps réel (GET /tods/api/rltmvhclsts)
+    Compatibilité :
+    - Ancien usage : MyBlueLinkClient(base_url=..., username=..., password=..., pin=...)
+    - Nouvel usage : MyBlueLinkClient(config=MyBlueLinkConfig(...))
+      ou MyBlueLinkClient(MyBlueLinkConfig(...))
+
+    Pour l'instant :
+    - Supporte un mode DEMO (aucun appel HTTP sortant, réponses simulées).
+    - Initialise bien l’attribut _logged_in pour éviter l'AttributeError.
+    - Encapsule les appels JSON afin d’éviter les JSONDecodeError brutes.
     """
 
     def __init__(
         self,
-        base_url: str | None = None,
-        username: str | None = None,
-        password: str | None = None,
-        pin: str | None = None,
-        timeout: float = 10.0,
+        config: Optional[MyBlueLinkConfig] = None,
+        *,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        pin: Optional[str] = None,
+        base_url: Optional[str] = None,
+        demo_mode: Optional[bool] = None,
     ) -> None:
-        self.base_url = base_url or os.getenv("MYBLUELINK_BASE_URL", "https://mybluelink.ca")
-        self.username = username or os.getenv("MYBLUELINK_USERNAME", "")
-        self.password = password or os.getenv("MYBLUELINK_PASSWORD", "")
-        self.pin = pin or os.getenv("MYBLUELINK_PIN", "")
-        self.timeout = timeout
+        """
+        Constructeur rétrocompatible.
 
+        Cas possibles :
+        - MyBlueLinkClient(config=MyBlueLinkConfig(...))
+        - MyBlueLinkClient(MyBlueLinkConfig(...))  [via param positionnel]
+        - MyBlueLinkClient(base_url="...", username="...", password="...", pin="1234", demo_mode=False)
+        - MyBlueLinkClient()  -> configuration lue depuis l'environnement.
+        """
+
+        # Si le premier paramètre a été passé de façon positionnelle,
+        # il sera dans "config" (signature standard Python).
+        if config is not None:
+            self._config = config
+        else:
+            # On part de la config provenant de l'environnement
+            env_cfg = MyBlueLinkConfig.from_env()
+
+            # On permet d'écraser certains champs via les arguments nommés,
+            # pour rester compatible avec l'ancien usage.
+            self._config = MyBlueLinkConfig(
+                username=username or env_cfg.username,
+                password=password or env_cfg.password,
+                pin=pin if pin is not None else env_cfg.pin,
+                base_url=base_url if base_url is not None else env_cfg.base_url,
+                demo_mode=demo_mode if demo_mode is not None else env_cfg.demo_mode,
+            )
+
+        self._session = requests.Session()
+        self._session.headers.update(
+            {
+                "User-Agent": "BluelinkJimMobile/0.1",
+                "Accept": "application/json, text/plain, */*",
+            }
+        )
+
+        # 🔹 ÉTAT DE CONNEXION INITIAL : évite l'AttributeError
+        self._logged_in: bool = False
+
+        # Eventuel token, cookies, etc. (pour usage réel ultérieur)
         self._access_token: Optional[str] = None
-        self._account_token: Optional[str] = None
 
-    def _get_headers(self) -> Dict[str, str]:
-        headers = {
-            "Content-Type": "application/json",
-        }
-        if self._access_token:
-            headers["Authorization"] = f"Bearer {self._access_token}"
-        return headers
+    # ------------------------------------------------------------------
+    # Utilitaires internes
+    # ------------------------------------------------------------------
+
+    @property
+    def logged_in(self) -> bool:
+        """
+        Indique si le client considère être authentifié auprès de MyBlueLink.
+        """
+        return self._logged_in
+
+    def _safe_json(self, resp: requests.Response) -> Dict[str, Any]:
+        """
+        Tente de décoder la réponse HTTP en JSON.
+        En cas d’échec, lève une MyBlueLinkError lisible.
+        """
+        try:
+            return resp.json()
+        except JSONDecodeError as exc:
+            # Pour debug, on pourrait logguer resp.text ici.
+            raise MyBlueLinkError(
+                "Réponse MyBlueLink non valide : le contenu n'est pas du JSON."
+            ) from exc
+
+    def _ensure_logged_in(self) -> None:
+        """
+        S'assure que le client est connecté avant d’appeler des endpoints.
+        En mode DEMO, on se contente de considérer que la connexion est OK.
+        """
+        if self._logged_in:
+            return
+
+        # En mode DEMO, on ne fait pas de véritable login.
+        if self._config.demo_mode:
+            self._logged_in = True
+            return
+
+        # En mode réel, on appelle la méthode login() qui effectuera
+        # l'authentification auprès de MyBlueLink.
+        self.login()
+
+    # ------------------------------------------------------------------
+    # Interface publique
+    # ------------------------------------------------------------------
 
     def login(self) -> None:
         """
-        Appelle POST /tods/api/lgn pour obtenir un token de session.
+        Authentifie l'utilisateur auprès de MyBlueLink.
 
-        À adapter en fonction du format réel renvoyé par MyBlueLink.
+        Implémentation actuelle :
+        - En mode DEMO : on marque simplement le client comme connecté.
+        - En mode réel : à implémenter avec les endpoints officiels/privés.
         """
-        payload = {
-            "username": self.username,
-            "password": self.password,
+        if self._config.demo_mode:
+            # Pas d'appel HTTP, on simule un succès.
+            self._logged_in = True
+            return
+
+        if not self._config.base_url:
+            raise MyBlueLinkError(
+                "MYBLUELINK_BASE_URL doit être défini pour le mode réel."
+            )
+
+        login_url = f"{self._config.base_url.rstrip('/')}/login"
+
+        payload: Dict[str, Any] = {
+            "username": self._config.username,
+            "password": self._config.password,
         }
 
-        url = f"{self.base_url}/tods/api/lgn"
-        with httpx.Client(timeout=self.timeout) as client:
-            resp = client.post(url, json=payload, headers=self._get_headers())
-            if resp.status_code != 200:
-                raise MyBlueLinkError(
-                    f"Login failed ({resp.status_code}): {resp.text}"
-                )
+        # Si l'API MyBlueLink a besoin du PIN au login, on pourrait l'inclure ici.
+        if self._config.pin:
+            payload["pin"] = self._config.pin
 
-            data: Dict[str, Any] = resp.json()
-            # Exemple : adapter à la structure réelle.
-            # Imaginons que data["accessToken"] contienne le token :
-            self._access_token = data.get("accessToken")
-            self._account_token = data.get("accountToken")
+        resp = self._session.post(login_url, json=payload, timeout=15)
+        # Si la réponse est une erreur HTTP, on lève une exception requests.HTTPError.
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise MyBlueLinkError(
+                f"Erreur HTTP lors de la connexion MyBlueLink : {exc}"
+            ) from exc
 
-            if not self._access_token:
-                raise MyBlueLinkError("No access token found in login response.")
+        data = self._safe_json(resp)
 
-    def ensure_logged_in(self) -> None:
-        """
-        Login paresseux : ne fait un login que si pas déjà connecté.
-        """
-        if not self._access_token:
-            self.login()
+        # Ici, adapter en fonction du format réel de l’API MyBlueLink
+        token = data.get("access_token")
+        if not token:
+            raise MyBlueLinkError(
+                "Connexion MyBlueLink réussie mais aucun token d'accès n'a été trouvé."
+            )
+
+        self._access_token = token
+        self._session.headers["Authorization"] = f"Bearer {token}"
+        self._logged_in = True
 
     def get_realtime_status(self, vin: str) -> Dict[str, Any]:
         """
-        Appelle GET /tods/api/rltmvhclsts pour obtenir le statut temps réel du véhicule.
+        Récupère le statut temps réel du véhicule pour un VIN donné.
 
-        À adapter à la réalité :
-        - parfois, l’API BlueLink attend un body JSON même pour des "GET"
-          ou utilise "POST" pour ce type d’opérations.
-        - Le nom du paramètre (VIN, vehicleId, etc.) doit être aligné
-          sur le comportement réel de l’API.
+        En mode DEMO :
+        - Retourne un JSON statique simulant une réponse MyBlueLink.
+
+        En mode réel :
+        - Nécessitera l'implémentation de l'endpoint exact MyBlueLink.
         """
-        self.ensure_logged_in()
+        # 🔹 S'assure que _logged_in existe et est correctement initialisé.
+        self._ensure_logged_in()
 
-        url = f"{self.base_url}/tods/api/rltmvhclsts"
+        if self._config.demo_mode:
+            # Réponse de démonstration (à adapter selon ton UI).
+            return {
+                "vin": vin,
+                "timestamp_utc": "2025-01-01T12:00:00Z",
+                "odometer_km": 12345.6,
+                "battery_level_percent": 82.0,
+                "battery_range_km": 310.0,
+                "is_charging": False,
+                "doors_locked": True,
+                "climate_on": False,
+            }
 
-        # Exemple générique. À ajuster selon ce que l’API attend exactement.
-        params_or_body = {
-            "vin": vin,
-        }
+        if not self._config.base_url:
+            raise MyBlueLinkError(
+                "MYBLUELINK_BASE_URL doit être défini pour récupérer le statut réel."
+            )
 
-        with httpx.Client(timeout=self.timeout) as client:
-            # Si en réalité c’est un POST, remplace par client.post(...)
-            resp = client.get(url, params=params_or_body, headers=self._get_headers())
-            if resp.status_code != 200:
-                raise MyBlueLinkError(
-                    f"get_realtime_status failed ({resp.status_code}): {resp.text}"
-                )
+        # Exemple d'URL, à remplacer par celle de l'API MyBlueLink réelle.
+        status_url = f"{self._config.base_url.rstrip('/')}/vehicles/{vin}/status"
 
-            return resp.json()
+        try:
+            resp = self._session.get(status_url, timeout=15)
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            raise MyBlueLinkError(
+                f"Erreur HTTP lors de la récupération du statut MyBlueLink : {exc}"
+            ) from exc
+        except requests.RequestException as exc:
+            raise MyBlueLinkError(
+                f"Erreur réseau lors de l'appel MyBlueLink : {exc}"
+            ) from exc
+
+        return self._safe_json(resp)
+
+
+# ---------------------------------------------------------------------------
+# Fabrique de client utilisée par le reste de l'application
+# ---------------------------------------------------------------------------
+
+
+def get_mybluelink_client() -> MyBlueLinkClient:
+    """
+    Fonction utilitaire appelée par les routes/services pour obtenir
+    une instance de MyBlueLinkClient prête à l'emploi.
+
+    Exemple typique d'utilisation dans une route :
+
+        from app.integrations.mybluelink.client import get_mybluelink_client
+
+        @router.post("/vehicles/{vehicle_id}/status/refresh")
+        def refresh_status(...):
+            client = get_mybluelink_client()
+            data = client.get_realtime_status(vin=vin)
+            ...
+
+    """
+    config = MyBlueLinkConfig.from_env()
+    return MyBlueLinkClient(config=config)

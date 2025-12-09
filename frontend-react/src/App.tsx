@@ -1,312 +1,523 @@
+// frontend-react/src/App.tsx
+
 import { useEffect, useState } from "react";
-import api from "./api/client";
-import type {
-  Vehicle,
-  VehicleStatus,
-  CreateVehicleDto,
-  CreateStatusDto,
-} from "./types";
+import {
+  listVehicles,
+  getLatestVehicleStatus,
+  refreshVehicleStatus,
+} from "./api/vehicles";
+import type { Vehicle, VehicleStatus } from "./types";
+import "./App.css"; // facultatif si tu as déjà quelque chose, sinon à ignorer
+
+interface AsyncState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    return d.toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function formatBoolean(value: boolean | null | undefined): string {
+  if (value === true) return "Oui";
+  if (value === false) return "Non";
+  return "—";
+}
+
+function formatMinutes(value: number | null | undefined): string {
+  if (value == null) return "—";
+  if (value < 60) return `${value} min`;
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  if (minutes === 0) return `${hours} h`;
+  return `${hours} h ${minutes} min`;
+}
 
 function App() {
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
-  const [latestStatus, setLatestStatus] = useState<VehicleStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [newVehicle, setNewVehicle] = useState<CreateVehicleDto>({
-    external_id: "",
-    name: "",
-    vin: "",
+  const [vehiclesState, setVehiclesState] = useState<
+    AsyncState<Vehicle[]>
+  >({
+    data: null,
+    loading: true,
+    error: null,
   });
 
-  const [newStatus, setNewStatus] = useState<CreateStatusDto>({
-    battery_level: undefined,
-    doors_locked: true,
-    odometer_km: undefined,
+  const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(
+    null,
+  );
+
+  const [statusState, setStatusState] = useState<
+    AsyncState<VehicleStatus | null>
+  >({
+    data: null,
+    loading: false,
+    error: null,
   });
 
-  const fetchVehicles = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.get<Vehicle[]>("/vehicles");
-      setVehicles(res.data);
-    } catch (e: any) {
-      console.error(e);
-      setError("Impossible de charger les véhicules.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchLatestStatus = async (vehicle: Vehicle) => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.get<VehicleStatus>(
-        `/vehicles/${vehicle.id}/status/latest`
-      );
-      setLatestStatus(res.data);
-    } catch (e: any) {
-      console.error(e);
-      setLatestStatus(null);
-      setError(
-        "Aucun statut trouvé pour ce véhicule ou erreur lors du chargement."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSelectVehicle = (vehicle: Vehicle) => {
-    setSelectedVehicle(vehicle);
-    fetchLatestStatus(vehicle);
-  };
-
-  const handleCreateVehicle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await api.post<Vehicle>("/vehicles", newVehicle);
-      setVehicles((prev) => [...prev, res.data]);
-      setNewVehicle({ external_id: "", name: "", vin: "" });
-    } catch (e: any) {
-      console.error(e);
-      setError("Erreur lors de la création du véhicule.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateStatus = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedVehicle) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-      const payload: CreateStatusDto = {
-        doors_locked: newStatus.doors_locked,
-        battery_level:
-          newStatus.battery_level === undefined
-            ? undefined
-            : Number(newStatus.battery_level),
-        odometer_km:
-          newStatus.odometer_km === undefined
-            ? undefined
-            : Number(newStatus.odometer_km),
-      };
-
-      const res = await api.post<VehicleStatus>(
-        `/vehicles/${selectedVehicle.id}/status`,
-        payload
-      );
-      setLatestStatus(res.data);
-      setNewStatus({
-        battery_level: undefined,
-        doors_locked: true,
-        odometer_km: undefined,
-      });
-    } catch (e: any) {
-      console.error(e);
-      setError("Erreur lors de la création du statut.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // 1) Chargement de la liste des véhicules au montage
   useEffect(() => {
-    fetchVehicles();
-  }, []);
+    let cancelled = false;
+
+    async function loadVehicles() {
+      setVehiclesState({
+        data: null,
+        loading: true,
+        error: null,
+      });
+
+      try {
+        const vehicles = await listVehicles();
+        if (cancelled) return;
+
+        setVehiclesState({
+          data: vehicles,
+          loading: false,
+          error: null,
+        });
+
+        // Si aucun véhicule sélectionné, prendre le premier
+        if (vehicles.length > 0 && selectedVehicleId == null) {
+          setSelectedVehicleId(vehicles[0].id);
+        }
+      } catch (error: any) {
+        if (cancelled) return;
+
+        setVehiclesState({
+          data: null,
+          loading: false,
+          error:
+            error?.message ??
+            "Erreur lors du chargement des véhicules.",
+        });
+      }
+    }
+
+    loadVehicles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVehicleId]);
+
+  // 2) Chargement du dernier status lorsque le véhicule sélectionné change
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStatus(vehicleId: number) {
+      setStatusState({
+        data: null,
+        loading: true,
+        error: null,
+      });
+
+      try {
+        const status = await getLatestVehicleStatus(vehicleId);
+        if (cancelled) return;
+
+        setStatusState({
+          data: status,
+          loading: false,
+          error: null,
+        });
+      } catch (error: any) {
+        if (cancelled) return;
+
+        setStatusState({
+          data: null,
+          loading: false,
+          error:
+            error?.message ??
+            "Erreur lors du chargement du statut du véhicule.",
+        });
+      }
+    }
+
+    if (selectedVehicleId != null) {
+      loadStatus(selectedVehicleId);
+    } else {
+      setStatusState({
+        data: null,
+        loading: false,
+        error: null,
+      });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVehicleId]);
+
+  async function handleRefreshClick() {
+    if (selectedVehicleId == null) return;
+
+    setRefreshing(true);
+    setStatusState((prev) => ({
+      ...prev,
+      error: null,
+    }));
+
+    try {
+      const status = await refreshVehicleStatus(selectedVehicleId);
+      setStatusState({
+        data: status,
+        loading: false,
+        error: null,
+      });
+    } catch (error: any) {
+      setStatusState((prev) => ({
+        ...prev,
+        error:
+          error?.message ??
+          "Erreur lors de la demande de rafraîchissement.",
+      }));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const vehicles = vehiclesState.data ?? [];
+  const selectedVehicle = vehicles.find(
+    (v) => v.id === selectedVehicleId,
+  );
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: 900, margin: "0 auto", padding: 16 }}>
-      <h1>Bluelink Gateway – Tableau de bord</h1>
-      <p>
-        Démonstration React/TypeScript consommant l&apos;API FastAPI (véhicules
-        & statuts).
-      </p>
-
-      {loading && <p>⏳ Chargement…</p>}
-      {error && <p style={{ color: "red" }}>⚠ {error}</p>}
-
-      <hr />
-
-      <section>
-        <h2>Créer un véhicule</h2>
-        <form onSubmit={handleCreateVehicle}>
-          <div>
-            <label>
-              External ID&nbsp;
-              <input
-                type="text"
-                value={newVehicle.external_id}
-                onChange={(e) =>
-                  setNewVehicle({ ...newVehicle, external_id: e.target.value })
-                }
-                required
-              />
-            </label>
-          </div>
-          <div>
-            <label>
-              Nom&nbsp;
-              <input
-                type="text"
-                value={newVehicle.name}
-                onChange={(e) =>
-                  setNewVehicle({ ...newVehicle, name: e.target.value })
-                }
-                required
-              />
-            </label>
-          </div>
-          <div>
-            <label>
-              VIN&nbsp;
-              <input
-                type="text"
-                value={newVehicle.vin}
-                onChange={(e) =>
-                  setNewVehicle({ ...newVehicle, vin: e.target.value })
-                }
-                required
-              />
-            </label>
-          </div>
-          <button type="submit" disabled={loading}>
-            Ajouter le véhicule
-          </button>
-        </form>
-      </section>
-
-      <hr />
-
-      <section>
-        <h2>Liste des véhicules</h2>
-        <button onClick={fetchVehicles} disabled={loading}>
-          Rafraîchir
-        </button>
-        {vehicles.length === 0 ? (
-          <p>Aucun véhicule pour le moment.</p>
-        ) : (
-          <ul>
-            {vehicles.map((v) => (
-              <li key={v.id}>
-                <button type="button" onClick={() => handleSelectVehicle(v)}>
-                  {v.name} ({v.vin})
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <hr />
-
-      {selectedVehicle && (
-        <section>
-          <h2>Véhicule sélectionné</h2>
-          <p>
-            <strong>{selectedVehicle.name}</strong> — VIN :{" "}
-            {selectedVehicle.vin}
+    <div
+      style={{
+        minHeight: "100vh",
+        backgroundColor: "#0f172a",
+        color: "#e5e7eb",
+        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        padding: "2rem",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "960px",
+          margin: "0 auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: "1.5rem",
+        }}
+      >
+        <header>
+          <h1 style={{ fontSize: "1.75rem", fontWeight: 700 }}>
+            Bluelink FastAPI Gateway – Dashboard
+          </h1>
+          <p style={{ color: "#9ca3af", marginTop: "0.25rem" }}>
+            Visualisation du véhicule et rafraîchissement du statut
+            via MyBlueLink.
           </p>
+        </header>
 
-          <h3>Dernier statut connu</h3>
-          {latestStatus ? (
-            <ul>
-              <li>
-                Horodatage : {new Date(latestStatus.timestamp).toLocaleString()}
-              </li>
-              <li>
-                Batterie :{" "}
-                {latestStatus.battery_level != null
-                  ? `${latestStatus.battery_level}%`
-                  : "N/D"}
-              </li>
-              <li>
-                Portes verrouillées :{" "}
-                {latestStatus.doors_locked ? "Oui" : "Non"}
-              </li>
-              <li>
-                Odomètre :{" "}
-                {latestStatus.odometer_km != null
-                  ? `${latestStatus.odometer_km} km`
-                  : "N/D"}
-              </li>
-            </ul>
-          ) : (
-            <p>Aucun statut disponible.</p>
+        {/* Bloc sélection du véhicule */}
+        <section
+          style={{
+            backgroundColor: "#020617",
+            borderRadius: "0.75rem",
+            padding: "1rem 1.25rem",
+            border: "1px solid #1f2937",
+          }}
+        >
+          <h2
+            style={{
+              fontSize: "1.1rem",
+              fontWeight: 600,
+              marginBottom: "0.75rem",
+            }}
+          >
+            Véhicule
+          </h2>
+
+          {vehiclesState.loading && <p>Chargement des véhicules…</p>}
+
+          {vehiclesState.error && (
+            <p style={{ color: "#fca5a5" }}>{vehiclesState.error}</p>
           )}
 
-          <h3>Ajouter un statut</h3>
-          <form onSubmit={handleCreateStatus}>
-            <div>
-              <label>
-                Batterie (%)&nbsp;
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={
-                    newStatus.battery_level !== undefined
-                      ? newStatus.battery_level
-                      : ""
-                  }
-                  onChange={(e) =>
-                    setNewStatus({
-                      ...newStatus,
-                      battery_level:
-                        e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
-                />
+          {!vehiclesState.loading && vehicles.length === 0 && (
+            <p>Aucun véhicule trouvé.</p>
+          )}
+
+          {vehicles.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.75rem",
+              }}
+            >
+              <label
+                htmlFor="vehicle-select"
+                style={{
+                  fontSize: "0.9rem",
+                  color: "#9ca3af",
+                }}
+              >
+                Sélectionner un véhicule :
               </label>
+              <select
+                id="vehicle-select"
+                value={selectedVehicleId ?? ""}
+                onChange={(e) =>
+                  setSelectedVehicleId(
+                    e.target.value
+                      ? Number(e.target.value)
+                      : null,
+                  )
+                }
+                style={{
+                  backgroundColor: "#020617",
+                  color: "#e5e7eb",
+                  borderRadius: "0.5rem",
+                  padding: "0.5rem 0.75rem",
+                  border: "1px solid #374151",
+                  maxWidth: "320px",
+                }}
+              >
+                {vehicles.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.nickname || v.vin || v.external_id || `#${v.id}`}
+                  </option>
+                ))}
+              </select>
+
+              {selectedVehicle && (
+                <div
+                  style={{
+                    marginTop: "0.75rem",
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(180px, 1fr))",
+                    gap: "0.5rem",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  <div>
+                    <span style={{ color: "#9ca3af" }}>VIN :</span>{" "}
+                    <span>{selectedVehicle.vin ?? "—"}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#9ca3af" }}>Nickname :</span>{" "}
+                    <span>{selectedVehicle.nickname ?? "—"}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#9ca3af" }}>
+                      External ID :
+                    </span>{" "}
+                    <span>{selectedVehicle.external_id ?? "—"}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#9ca3af" }}>Actif :</span>{" "}
+                    <span>
+                      {selectedVehicle.is_active ? "Oui" : "Non"}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#9ca3af" }}>
+                      Créé le :
+                    </span>{" "}
+                    <span>
+                      {formatDateTime(selectedVehicle.created_at)}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-            <div>
-              <label>
-                Odomètre (km)&nbsp;
-                <input
-                  type="number"
-                  min={0}
-                  value={
-                    newStatus.odometer_km !== undefined
-                      ? newStatus.odometer_km
-                      : ""
-                  }
-                  onChange={(e) =>
-                    setNewStatus({
-                      ...newStatus,
-                      odometer_km:
-                        e.target.value === "" ? undefined : Number(e.target.value),
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <div>
-              <label>
-                Portes verrouillées&nbsp;
-                <input
-                  type="checkbox"
-                  checked={newStatus.doors_locked}
-                  onChange={(e) =>
-                    setNewStatus({
-                      ...newStatus,
-                      doors_locked: e.target.checked,
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <button type="submit" disabled={loading}>
-              Enregistrer le statut
-            </button>
-          </form>
+          )}
         </section>
-      )}
+
+        {/* Bloc statut du véhicule */}
+        <section
+          style={{
+            backgroundColor: "#020617",
+            borderRadius: "0.75rem",
+            padding: "1rem 1.25rem",
+            border: "1px solid #1f2937",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: "1rem",
+              alignItems: "center",
+              marginBottom: "0.75rem",
+            }}
+          >
+            <h2
+              style={{
+                fontSize: "1.1rem",
+                fontWeight: 600,
+              }}
+            >
+              Statut du véhicule
+            </h2>
+
+            <button
+              onClick={handleRefreshClick}
+              disabled={
+                selectedVehicleId == null || refreshing
+              }
+              style={{
+                backgroundColor: refreshing
+                  ? "#4b5563"
+                  : "#2563eb",
+                border: "none",
+                color: "#e5e7eb",
+                padding: "0.5rem 0.9rem",
+                borderRadius: "9999px",
+                fontSize: "0.9rem",
+                cursor:
+                  selectedVehicleId == null || refreshing
+                    ? "not-allowed"
+                    : "pointer",
+                opacity:
+                  selectedVehicleId == null || refreshing
+                    ? 0.7
+                    : 1,
+              }}
+            >
+              {refreshing
+                ? "Rafraîchissement…"
+                : "Rafraîchir via MyBlueLink"}
+            </button>
+          </div>
+
+          {statusState.loading && (
+            <p>Chargement du statut…</p>
+          )}
+
+          {statusState.error && (
+            <p style={{ color: "#fca5a5" }}>{statusState.error}</p>
+          )}
+
+          {!statusState.loading &&
+            !statusState.error &&
+            !statusState.data && (
+              <p>
+                Aucun statut disponible pour ce véhicule (encore
+                jamais rafraîchi ?).
+              </p>
+            )}
+
+          {statusState.data && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: "0.75rem",
+                fontSize: "0.9rem",
+              }}
+            >
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Dernière mise à jour :
+                </span>{" "}
+                <span>
+                  {formatDateTime(statusState.data.timestamp)}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Batterie :
+                </span>{" "}
+                <span>
+                  {statusState.data.battery_level != null
+                    ? `${statusState.data.battery_level}%`
+                    : "—"}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Branché :
+                </span>{" "}
+                <span>
+                  {formatBoolean(statusState.data.is_plugged)}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  En charge :
+                </span>{" "}
+                <span>
+                  {formatBoolean(statusState.data.is_charging)}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Autonomie totale :
+                </span>{" "}
+                <span>
+                  {statusState.data.total_range_km != null
+                    ? `${statusState.data.total_range_km} km`
+                    : "—"}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Temps restant :
+                </span>{" "}
+                <span>
+                  {formatMinutes(
+                    statusState.data
+                      .remaining_charge_minutes,
+                  )}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Latitude :
+                </span>{" "}
+                <span>
+                  {statusState.data.latitude ?? "—"}
+                </span>
+              </div>
+
+              <div>
+                <span style={{ color: "#9ca3af" }}>
+                  Longitude :
+                </span>{" "}
+                <span>
+                  {statusState.data.longitude ?? "—"}
+                </span>
+              </div>
+
+              {statusState.data.latitude != null &&
+                statusState.data.longitude != null && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <a
+                      href={`https://www.google.com/maps?q=${statusState.data.latitude},${statusState.data.longitude}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        color: "#60a5fa",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Ouvrir dans Google Maps
+                    </a>
+                  </div>
+                )}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
