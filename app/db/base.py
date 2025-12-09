@@ -1,10 +1,10 @@
 # app/db/base.py
-from sqlalchemy.orm import DeclarativeBase
+"""
+Centralisation des modèles SQLAlchemy pour qu'Alembic puisse les détecter.
+"""
 
+from app.db.base_class import Base
 
-class Base(DeclarativeBase):
-    """
-    Base commune pour tous les modèles SQLAlchemy.
-    On n'importe PAS les modèles ici pour éviter les imports circulaires.
-    """
-    pass
+# Imports "pour effets de bord" : ils enregistrent les modèles auprès de Base
+from app.db.models.vehicle import Vehicle  # noqa: F401
+from app.db.models.vehicle_status import VehicleStatus  # noqa: F401

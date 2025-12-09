@@ -24,8 +24,12 @@ class Settings(BaseSettings):
     MYBLUELINK_VIN: str = os.getenv("MYBLUELINK_VIN")
 
 
-    # On gardera ces champs pour plus tard (API externe, secrets, etc.)
-    # BLUELINK_BASE_URL: AnyUrl | None = None
+    #   Utilise la variable d'environnement MYBLUELINK_BASE_URL définie dans ton `.env`.
+    #   Valeur par défaut au cas où la variable n'est pas présente.
+    mybluelink_base_url: str = os.getenv(
+        "MYBLUELINK_BASE_URL",
+        "https://mybluelink.ca",
+    )
 
     class Config:
         env_file = ".env"
