@@ -12,11 +12,6 @@ from alembic import context
 from app.core.config import settings
 from app.db.base import Base
 
-# Import explicite des modèles pour qu'Alembic les détecte
-# (évite les import circulaires avec Base)
-from app.db.models import vehicle  # noqa: F401
-from app.db.models import vehicle_status  # noqa: F401
-
 # ---------------------------------------------------------
 # Configuration Alembic
 # ---------------------------------------------------------

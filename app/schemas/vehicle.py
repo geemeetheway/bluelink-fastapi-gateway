@@ -10,19 +10,27 @@ from pydantic import BaseModel, Field, ConfigDict
 # -----------------
 
 class VehicleBase(BaseModel):
-    external_id: str = Field(
-        ...,
-        description="Identifiant externe du véhicule (ex: ID Bluelink).",
-    )
-    name: str = Field(
-        ...,
-        description="Nom lisible du véhicule (ex: 'Ioniq 5 Blanche').",
-    )
-    vin: str = Field(
-        ...,
-        description="Numéro VIN du véhicule.",
-    )
+    """
+    Base commune pour les véhicules (création / lecture).
 
+    On garde `name` mais on le rend optionnel pour rester compatible avec
+    les anciens enregistrements / anciens modèles, même si la colonne
+    SQLAlchemy a changé ou si la valeur est NULL.
+    """
+    external_id: Optional[str] = Field(
+        None,
+        description="Identifiant externe (MyBlueLink, etc.).",
+    )
+    name: Optional[str] = Field(
+        None,
+        description="Nom convivial du véhicule (optionnel).",
+    )
+    vin: Optional[str] = Field(
+        None,
+        description="Numéro de série du véhicule (VIN).",
+        min_length=1,
+        max_length=64,
+    )
 
 class VehicleCreate(VehicleBase):
     """
@@ -52,7 +60,7 @@ class VehicleStatusRead(BaseModel):
     vehicle_id: int
     timestamp: datetime
     battery_level: Optional[float] = None
-    doors_locked: bool
+    doors_locked: bool | None = None
     odometer_km: Optional[float] = None
 
     # Pydantic v2 : idem, permet la conversion depuis un objet SQLAlchemy
